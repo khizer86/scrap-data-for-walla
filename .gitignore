@@ -8,3 +8,11 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Secrets and cached browser sessions
+.env
+.sessions/
+
+# Downloaded reports
+outputs/
+login-check.png
