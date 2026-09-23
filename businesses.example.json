@@ -1,0 +1,18 @@
+[
+  {
+    "slug": "downtown-yoga",
+    "name": "Downtown Yoga",
+    "email": "owner@downtownyoga.example",
+    "password": "put-the-real-password-here",
+    "enabled": true,
+    "notes": "Staff login must have the 'Export and print reports' permission."
+  },
+  {
+    "slug": "riverside-pilates",
+    "name": "Riverside Pilates",
+    "email": "admin@riversidepilates.example",
+    "password": "put-the-real-password-here",
+    "enabled": false,
+    "notes": "Disabled until the owner confirms authorisation in writing."
+  }
+]

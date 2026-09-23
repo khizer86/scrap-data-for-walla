@@ -12,7 +12,8 @@ wheels/
 # Secrets and cached browser sessions
 .env
 .sessions/
+businesses.json
 
-# Downloaded reports
+# Downloaded reports and debug artefacts
 outputs/
 login-check.png

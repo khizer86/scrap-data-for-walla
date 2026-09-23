@@ -235,16 +235,26 @@ class WellnessLivingAuth:
 
         We need a *positive* signal, not just the absence of a login form:
         passport pushes unknown addresses into a signup page that has no form
-        either. So we require being handed back to the regional host, off the
-        passport flow, with no password box in sight.
+        either, and the public marketing site shares the back office's host.
+
+        So we require three things: the back office host, no trace of the login
+        flow in the URL, and an actual back-office link on the page.
         """
         url = self.page.url
         if not url.startswith(c.AUTHENTICATED_URL_PREFIX):
             return False
         if any(marker in url for marker in c.LOGIN_URL_MARKERS):
             return False
+
         password_box = self.page.locator(c.PASSWORD_SELECTORS[0]).first
-        return not (password_box.count() and password_box.is_visible())
+        if password_box.count() and password_box.is_visible():
+            return False
+
+        # The dashboard is full of /rs/ links; the marketing site has none.
+        return any(
+            self.page.locator(selector).count()
+            for selector in c.BACKOFFICE_MARKER_SELECTORS
+        )
 
     def _first_visible(self, selectors, description: str, required: bool = True):
         """
