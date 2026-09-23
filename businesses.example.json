@@ -5,6 +5,7 @@
     "email": "owner@downtownyoga.example",
     "password": "put-the-real-password-here",
     "enabled": true,
+    "history_start": "2020-01-01",
     "notes": "Staff login must have the 'Export and print reports' permission."
   },
   {

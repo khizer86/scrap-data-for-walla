@@ -99,15 +99,33 @@ def _write_manifest(
     results: list[ExportResult],
     run_date: date,
 ) -> None:
-    """Record what this run produced, next to the files it produced."""
+    """
+    Record what this run produced, next to the files it produced.
+
+    Merged rather than overwritten: re-running two failed reports must not
+    erase the record of the eight that succeeded earlier the same day, when
+    their files are still sitting in the same folder.
+    """
+    extractor.output_dir.mkdir(parents=True, exist_ok=True)
+    path = extractor.output_dir / "run.json"
+
+    reports: dict[str, dict] = {}
+    if path.exists():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+            reports = {entry["report"]: entry for entry in previous.get("reports", [])}
+        except (json.JSONDecodeError, KeyError, TypeError) as exc:
+            logger.warning(f"Ignoring unreadable manifest at {path}: {exc}")
+
+    for result in results:
+        reports[result.report_key] = result.as_dict()
+
     manifest = {
         "platform": PLATFORM_NAME,
         "business": {"slug": business.slug, "name": business.name},
         "run_date": run_date.isoformat(),
         "finished_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "reports": [result.as_dict() for result in results],
+        "reports": list(reports.values()),
     }
-    extractor.output_dir.mkdir(parents=True, exist_ok=True)
-    path = extractor.output_dir / "run.json"
     path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     logger.info(f"Manifest: {path}")

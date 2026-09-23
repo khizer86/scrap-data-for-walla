@@ -138,19 +138,104 @@ class WellnessLivingExtractor:
         Thoth reports do not - their URL carries a per-session token - so we
         read the link out of the nav and follow it.
         """
-        if report.sid_report:
-            url = c.REPORT_VIEW_URL.format(sid_report=report.sid_report)
-            self.page.goto(url, wait_until="domcontentloaded")
-        elif report.nav_label:
-            self._follow_nav_link(report)
+        for attempt in range(1, c.OPEN_REPORT_ATTEMPTS + 1):
+            if report.sid_report:
+                url = c.REPORT_VIEW_URL.format(sid_report=report.sid_report)
+                self.page.goto(url, wait_until="domcontentloaded")
+            elif report.nav_label:
+                self._follow_nav_link(report)
+            else:
+                raise ReportExportError(
+                    f"{report.key} has neither sid_report nor nav_label - "
+                    "reports.py does not say how to reach it."
+                )
+
+            # The back office is a single-page app: right after login it can
+            # finish its own routing *after* our navigation and replace the
+            # report with the schedule. Landing elsewhere is not an error we
+            # can detect later - on the schedule page a `.css-navigate-calendar`
+            # element still exists, so every subsequent step misfires quietly.
+            self.page.wait_for_timeout(3000)
+            if self._on_report_page(report):
+                break
+
+            logger.warning(
+                f"Navigation landed on {self.page.url} instead of "
+                f"{report.label} - retrying (attempt {attempt})."
+            )
         else:
             raise ReportExportError(
-                f"{report.key} has neither sid_report nor nav_label - "
-                "reports.py does not say how to reach it."
+                f"Could not stay on {report.label} after "
+                f"{c.OPEN_REPORT_ATTEMPTS} attempts; the back office kept "
+                f"redirecting to {self.page.url}."
             )
 
-        self.page.wait_for_timeout(self.settle_ms)
+        self._wait_for_report_ready()
+        self._check_classic_ui(report)
         self._check_permission()
+
+    def _on_report_page(self, report: Report) -> bool:
+        """
+        Are we actually on the report we asked for?
+
+        This is a URL check only. Whether the page is the *classic* UI we can
+        actually drive is decided later by _check_classic_ui(), once
+        _wait_for_report_ready() has given the toolbar time to render -
+        checking it here would retry needlessly on a slow but healthy page.
+        """
+        url = self.page.url
+        if report.sid_report:
+            return f"sid_report={report.sid_report}" in url
+        return "/Wl/" in url or "/Thoth/" in url
+
+    def _check_classic_ui(self, report: Report) -> None:
+        """
+        Fail with the real reason when we are stuck on the newer back office.
+
+        Discovered on a 9,000-client studio: the same account serves the classic
+        reports UI to headless Chrome and the newer UI to a headed browser. The
+        extractor drives the classic UI, so a headed run on such an account
+        cannot work, and the symptom - a missing toolbar - looks nothing like
+        the cause.
+
+        Only classic (`sid_report`) reports are checked. Reports on the newer
+        Thoth and /Wl/ engines legitimately have a different toolbar, and
+        judging them by the classic one condemns pages that work fine.
+        """
+        if not report.sid_report:
+            return
+
+        if self.page.locator(c.EXPORT_BUTTON_SELECTORS[0]).count():
+            return
+
+        raise ReportExportError(
+            "This account is showing WellnessLiving's newer back office, which "
+            "has no classic report toolbar to drive. Some accounts serve the "
+            "classic UI to headless Chrome and the new one to a headed browser "
+            "- try running without --headed (HEADLESS=true)."
+        )
+
+    def _wait_for_report_ready(self) -> None:
+        """
+        Wait for the report's toolbar to actually exist.
+
+        A fixed sleep is not good enough: a big studio's report takes far longer
+        to build than a small one, and interacting early has real consequences -
+        the date pill is a `js-navigate-calendar` element whose click falls
+        through to "go to the calendar" until its handler is bound, which
+        silently lands us on the schedule page instead of opening the picker.
+        """
+        for selector in (c.EXPORT_BUTTON_SELECTORS[0], c.DATE_SUMMARY_SELECTOR):
+            try:
+                self.page.wait_for_selector(
+                    selector, state="visible", timeout=c.REPORT_READY_TIMEOUT_MS
+                )
+            except PlaywrightTimeout:
+                logger.debug(f"Report toolbar element never appeared: {selector}")
+
+        # The grid keeps loading after the toolbar renders, and the pill's
+        # handler is bound in that window.
+        self.page.wait_for_timeout(self.settle_ms)
 
     def _follow_nav_link(self, report: Report) -> None:
         """
@@ -209,14 +294,20 @@ class WellnessLivingExtractor:
             return
 
         start, end = window
+
+        # Never ask for data from before the business existed. The default
+        # ten-year history is a safe guess, not a useful one: on a studio that
+        # opened in 2024 it adds eight empty years, and a big sales export over
+        # that range does not complete at all.
+        opened = self.business.history_start_date
+        if opened and start < opened:
+            logger.debug(f"Clamping start {start} to {self.business.slug}'s {opened}")
+            start = opened
+
         logger.debug(f"Date range: {start} to {end}")
+        self._applied_window = (start, end)
 
-        ui.click_first_visible(
-            self.page, c.DATE_RANGE_TOGGLE_SELECTORS, "date range pill"
-        )
-        self.page.wait_for_timeout(1500)
-
-        from_box = ui.first_visible(self.page, c.DATE_FROM_SELECTORS, "date-from field")
+        from_box = self._open_date_panel(report)
 
         # Some reports (Check-Ins, for one) cover a single day and have no end
         # field at all. Those export one day per run rather than a range.
@@ -243,6 +334,42 @@ class WellnessLivingExtractor:
         ui.click_first_visible(self.page, c.APPLY_BUTTON_SELECTORS, "Apply button")
         self._wait_for_report_refresh()
         self._verify_date_range(start, end)
+
+    def _open_date_panel(self, report: Report):
+        """
+        Open the calendar panel and return the start-date field.
+
+        Clicking the pill before its handler is bound navigates to the schedule
+        instead of opening the picker, so we check where we ended up and retry
+        from the report page rather than failing on the first miss.
+        """
+        for attempt in range(1, c.DATE_PANEL_ATTEMPTS + 1):
+            ui.click_first_visible(
+                self.page, c.DATE_RANGE_TOGGLE_SELECTORS, "date range pill"
+            )
+            self.page.wait_for_timeout(2000)
+
+            from_box = ui.first_visible(
+                self.page, c.DATE_FROM_SELECTORS, "date-from field", required=False
+            )
+            if from_box is not None:
+                return from_box
+
+            if "report-view" not in self.page.url and "/Wl/" not in self.page.url:
+                logger.warning(
+                    f"Clicking the date pill navigated away to {self.page.url} - "
+                    f"the report was not ready. Reopening (attempt {attempt})."
+                )
+                self._open_report(report)
+            else:
+                logger.debug(f"Date panel did not open (attempt {attempt}); waiting")
+                self.page.wait_for_timeout(self.settle_ms)
+
+        raise ReportExportError(
+            f"Could not open the date panel for {report.label} after "
+            f"{c.DATE_PANEL_ATTEMPTS} attempts. The report may be too slow to "
+            "load - try raising REPORT_READY_TIMEOUT_MS or SETTLE_MS."
+        )
 
     def _verify_date_range(self, start: date, end: date) -> None:
         """
@@ -284,16 +411,17 @@ class WellnessLivingExtractor:
         """
         Press Export and get the file back.
 
-        Races a direct download against WellnessLiving's 15-second threshold,
-        after which the report goes to the Generated Reports page instead.
+        Waits generously for the file, because a big report is slow to build
+        rather than queued. Only when that wait is exhausted do we look at the
+        Generated Reports page.
         """
         self._open_export_menu()
         self.page.wait_for_timeout(2000)  # the format menu animates open
 
+        timeout = report.download_timeout_ms or c.DIRECT_DOWNLOAD_TIMEOUT_MS
+
         try:
-            with self.page.expect_download(
-                timeout=c.ASYNC_EXPORT_THRESHOLD_MS
-            ) as download_info:
+            with self.page.expect_download(timeout=timeout) as download_info:
                 ui.click_first_visible(
                     self.page, c.EXPORT_CSV_SELECTORS, "Export to CSV option"
                 )
@@ -301,9 +429,8 @@ class WellnessLivingExtractor:
 
         except PlaywrightTimeout:
             logger.info(
-                f"{report.label} did not download within "
-                f"{c.ASYNC_EXPORT_THRESHOLD_MS // 1000}s - it has been queued. "
-                "Collecting it from Generated Reports."
+                f"{report.label} did not download within {timeout // 1000}s - "
+                "checking whether WellnessLiving queued it instead."
             )
             return self._download_from_generated_reports(report), "generated-reports"
 
@@ -335,6 +462,20 @@ class WellnessLivingExtractor:
 
         while time.monotonic() < deadline:
             self.page.goto(c.GENERATED_REPORTS_URL, wait_until="domcontentloaded")
+            self.page.wait_for_timeout(self.settle_ms)
+
+            # An empty page means nothing was ever queued, so the export failed
+            # for some other reason. Say so now instead of polling for minutes.
+            if ui.first_visible(
+                self.page, c.GENERATED_EMPTY_SELECTORS, "empty state", required=False
+            ):
+                raise ReportExportError(
+                    f"'{report.label}' did not download, and WellnessLiving has "
+                    "no queued report for it either. The export was probably "
+                    "still building - try a narrower date range, or raise "
+                    "DIRECT_DOWNLOAD_TIMEOUT_MS."
+                )
+
             row = self._generated_row(report)
 
             if row is None:
@@ -418,10 +559,43 @@ class WellnessLivingExtractor:
         frame = frame[~(frame == "").all(axis="columns")]
 
         self._check_headers(report, tuple(frame.columns))
+        self._warn_if_truncated(report, frame)
 
         path = self.output_dir / f"{report.key}.csv"
         frame.to_csv(path, index=False, encoding="utf-8")
         return path, len(frame)
+
+    def _warn_if_truncated(self, report: Report, frame: pd.DataFrame) -> None:
+        """
+        Warn when the data looks cut off at the start of our window.
+
+        A history report whose earliest row falls on the very first day of the
+        requested range is the signature of truncation, not of a business that
+        happened to open that day. This was a real incident: a business whose
+        `history_start` was set to 2024 from memory silently lost 22,481
+        attendance rows going back to 2021, and the only clue was that the
+        export began exactly on 1 January.
+        """
+        window = getattr(self, "_applied_window", None)
+        if not window or report.date_mode != "past" or frame.empty:
+            return
+
+        start, _ = window
+        date_columns = [col for col in frame.columns if "date" in col.lower()]
+        if not date_columns:
+            return
+
+        values = pd.to_datetime(frame[date_columns[0]], errors="coerce").dropna()
+        if values.empty:
+            return
+
+        earliest = values.min().date()
+        if earliest <= start:
+            logger.warning(
+                f"{report.label}: earliest row is {earliest}, the first day of "
+                f"the requested window. Data before {start} is probably being "
+                f"cut off - check {self.business.slug}'s history_start."
+            )
 
     def _check_headers(self, report: Report, headers: tuple[str, ...]) -> None:
         """

@@ -239,6 +239,45 @@ history would need one run per day. We use the range-capable
 `visit-class-buy-detail` instead. The extractor still handles single-day reports
 by exporting one day and warning.
 
+### Two back offices — the one that cost the most time
+
+**Some accounts are served a different UI in headed Chrome than in headless.**
+Confirmed 2026-09-23 on a 9,000-client studio: the same account, same URL, same
+session.
+
+| | classic toolbar | date picker | schedule button |
+|---|---|---|---|
+| headless | present | present | present |
+| headed | **absent** | **absent** | present |
+
+In headed mode the classic report page renders WellnessLiving's newer back
+office — no Export control, no date picker, just a schedule. The only surviving
+match was `.css-navigate-calendar`, which in that UI is the *Schedule* nav
+button, so every attempt to open the date picker navigated to the calendar and
+the run failed with a misleading "date field not found".
+
+Consequences, all of which the code now handles:
+
+- **Run headless.** `HEADLESS=true` is the default in `.env` for this reason.
+  `--headed` is for clearing a first-login verification code, nothing else, and
+  on such an account it cannot complete a report.
+- `_check_classic_ui()` detects the new UI and says so directly, instead of
+  letting it surface as a missing selector three minutes later.
+- A small studio (Hiptwist) serves the classic UI either way, which is why this
+  stayed hidden until the second business. **One business is not a sample.**
+
+Diagnosing it took a screenshot from the failure artefacts - the logs alone kept
+pointing at timing. When a selector "should be there" and isn't, look at the
+page before theorising about waits.
+
+### Also learned on the second business
+
+- Reports open on the *current week* and take ~15s to render a decade of
+  clients; a CSV export of 9,444 clients downloads in ~13s and the whole report
+  takes ~86s end to end.
+- The 15-second "Generated Reports" threshold in WL's docs did **not** trigger
+  even at 9,444 rows. The queued path remains unexercised.
+
 ### Still from WL's docs, not yet hit in practice
 
 **Async exports.** Reports taking 15 seconds or more queue to the Generated

@@ -109,9 +109,21 @@ VERIFICATION_SELECTORS = (
 NAV_HOST_REPORT = "login-profile"
 
 # Report pages load their grid over XHR well after domcontentloaded, and the
-# toolbar is not usable before that. Measured at ~6s on a small studio; 9s
-# leaves room for a bigger one.
-SETTLE_MS = 9000
+# toolbar is not usable before that. Measured: every toolbar control is visible
+# ~6s after navigation even on a 9,000-client report, so we wait for the
+# toolbar rather than sleeping, and keep the ceiling tight - a long timeout
+# only delays reporting a real problem.
+REPORT_READY_TIMEOUT_MS = 30_000
+
+# The SPA can replace our navigation with its own default view just after
+# login, so we confirm we are on the report and re-navigate if not.
+OPEN_REPORT_ATTEMPTS = 3
+SETTLE_MS = 12_000
+
+# Clicking the date pill early navigates to the schedule instead of opening the
+# picker, because `js-navigate-calendar` falls back to its default behaviour
+# until its handler is bound. We detect that and retry rather than fail.
+DATE_PANEL_ATTEMPTS = 3
 
 
 # --- Report page controls ----------------------------------------------
@@ -169,8 +181,15 @@ APPLY_BUTTON_SELECTORS = (
 
 DATE_INPUT_FORMAT = "%Y-%m-%d"
 
-# The pill that opens the calendar panel.
+# What to click to open the calendar panel.
+#
+# Prefer the summary input: it sits inside the pill and opens the same panel,
+# but it is a plain text input. The surrounding div is a `js-navigate-calendar`
+# element whose unbound fallback is "go to the schedule", so clicking it before
+# the page finishes wiring up silently navigates away from the report. The div
+# stays as a fallback for any layout without the input.
 DATE_RANGE_TOGGLE_SELECTORS = (
+    "input.js-datepicker-input",
     "div.js-navigate-calendar",
     ".css-navigate-calendar",
 )
@@ -203,7 +222,14 @@ PERMISSION_DENIED_SELECTORS = (
 # where it is fetched with Action > Export to CSV. Every extraction therefore
 # needs both paths. See PLAN.md, Part C.
 
-GENERATED_REPORTS_URL = f"{BASE_URL}/report/generated"  # PROVISIONAL
+GENERATED_REPORTS_URL = f"{BACKOFFICE_URL}/rs/report-view.html?sid_report=report-background-generate"
+
+# The page's empty state. Reaching this means the export never queued, so
+# waiting longer is pointless - the run should say so rather than poll.
+GENERATED_EMPTY_SELECTORS = (
+    ".css-report-generate-empty-view",
+    ":text('No generated reports found')",
+)
 
 GENERATED_REPORTS_LINK_SELECTORS = (
     "a:has-text('Generated')",
@@ -217,13 +243,28 @@ GENERATED_ROW_SELECTOR = "tr"
 GENERATED_READY_STATUSES = ("complete", "completed", "ready", "finished", "done")
 GENERATED_FAILED_STATUSES = ("failed", "error", "cancelled", "canceled")
 
-# How long we wait for a direct download before assuming the report went async
-# and switching to the Generated Reports page. WellnessLiving's own threshold is
-# 15 seconds; we allow a little slack for a slow network.
-ASYNC_EXPORT_THRESHOLD_MS = 25_000
+# How long to wait for the file itself.
+#
+# Measured by hand on a 9,000-client studio: exporting a decade of clients to
+# CSV downloads in about 13 seconds. So the export is not slow - when a
+# download never arrives, the usual cause is that we interacted with the page
+# before it was ready, not that WellnessLiving is still building the file.
+#
+# 120s is roughly nine times the observed time: generous enough for a bigger
+# studio or a slow network, short enough that a genuine failure is reported
+# promptly rather than after minutes of waiting.
+DIRECT_DOWNLOAD_TIMEOUT_MS = 120_000
 
 
 # --- Reports -----------------------------------------------------------
 # The report registry lives in reports.py, which carries per-report navigation,
 # date handling and expected headers. The API path (WlReportSid) is parked here
 # for when the WellnessLiving app auth codes arrive.
+
+
+# --- Browser -----------------------------------------------------------
+# The report toolbar (Export button, date picker) is not rendered on a narrow
+# layout, so the viewport is pinned rather than left to the window size.
+# Confirmed on a 9,000-client studio: at the default headed window size the
+# toolbar was absent entirely and every run failed; at 1920x1080 it renders.
+VIEWPORT = {"width": 1920, "height": 1080}

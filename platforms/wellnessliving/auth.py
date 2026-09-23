@@ -72,6 +72,9 @@ class WellnessLivingAuth:
         self._browser = self._playwright.chromium.launch(
             headless=self.headless,
             slow_mo=config.SLOW_MO,
+            # Match the window to the viewport below, so a headed run looks the
+            # same as a headless one.
+            args=[f"--window-size={c.VIEWPORT['width']},{c.VIEWPORT['height']}"],
         )
 
         # Reuse a saved session if we have one.
@@ -82,6 +85,11 @@ class WellnessLivingAuth:
         self._context = self._browser.new_context(
             storage_state=storage_state,
             accept_downloads=True,
+            # Pinned deliberately. The back office collapses its report toolbar
+            # on a narrow layout - the Export button and date picker stop being
+            # rendered at all - and a headed window is sized differently from
+            # headless's default, so runs disagreed depending on HEADLESS.
+            viewport=c.VIEWPORT,
         )
         self._context.set_default_timeout(config.TIMEOUT)
         self.page = self._context.new_page()

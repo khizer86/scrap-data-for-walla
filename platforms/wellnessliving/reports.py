@@ -50,6 +50,11 @@ class Report:
     days: int = 365
     offset_days: int = 0
     expected_headers: tuple[str, ...] = ()
+    # Override the default download wait for reports known to be huge. A big
+    # studio's decade of visits takes minutes to build, while most reports
+    # arrive in seconds - one global timeout cannot serve both without either
+    # failing early or stalling every genuine failure.
+    download_timeout_ms: int | None = None
     notes: str = ""
 
     def date_range(self, today: date | None = None) -> tuple[date, date] | None:
@@ -99,6 +104,8 @@ REPORTS: dict[str, Report] = {
         nav_label="All Sales",
         date_mode="past",
         days=LIFETIME_DAYS,
+        # Every transaction ever - as large as the attendance export.
+        download_timeout_ms=900_000,
         notes=(
             "Lives on the newer Thoth engine at "
             "/Thoth/Report/SalesReport/Transaction/TransactionAllReportPage.html, "
@@ -112,6 +119,9 @@ REPORTS: dict[str, Report] = {
         sid_report="visit-class-buy-detail",
         date_mode="past",
         days=LIFETIME_DAYS,
+        # The largest export by far: every visit ever, one row each. A
+        # 9,000-client studio needs well over the default two minutes.
+        download_timeout_ms=900_000,
         notes=(
             "One row per visit, with the purchase option it was booked against. "
             "Chosen over 'Check-Ins' (visit-attend-list) because Check-Ins is a "

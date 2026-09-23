@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from loguru import logger
@@ -36,7 +37,22 @@ class Business:
     email: str
     password: str
     enabled: bool = True
+    # When the business opened, as YYYY-MM-DD. History reports start here
+    # instead of the default ten years back. Asking WellnessLiving for years
+    # before the business existed is not free: on a big studio the sales
+    # export never finished over a ten-year window.
+    history_start: str = ""
     notes: str = ""
+
+    @property
+    def history_start_date(self) -> date | None:
+        """`history_start` as a date, or None if it is unset or unparseable."""
+        if not self.history_start:
+            return None
+        try:
+            return date.fromisoformat(self.history_start)
+        except ValueError:
+            return None
 
     @property
     def session_file(self) -> Path:
@@ -151,6 +167,7 @@ def _business_from_entry(entry: dict, index: int) -> Business:
         email=email,
         password=password,
         enabled=bool(entry.get("enabled", True)),
+        history_start=entry.get("history_start", ""),
         notes=entry.get("notes", ""),
     )
 
