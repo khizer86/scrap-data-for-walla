@@ -6,6 +6,7 @@ Run an extraction, for one business or all of them.
     uv run python run.py -b hiptwist                 # one business
     uv run python run.py -b hiptwist -r clients      # one report
     uv run python run.py --headed --trace            # watch it, and record a trace
+    uv run python run.py -b hiptwist --backup-only   # re-copy today's files to Drive
 
 Onboarding a new business is an entry in businesses.json - see
 businesses.example.json. The first run for a business should use --headed, since
@@ -28,6 +29,7 @@ from datetime import date
 from loguru import logger
 
 import config
+from backup import BackupResult, backup_business, drive_folder_for
 from businesses import Business, BusinessConfigError, select_businesses
 
 # Platform name -> the module implementing describe_reports() and run_business().
@@ -69,6 +71,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     run_date = date.fromisoformat(args.date) if args.date else date.today()
+
+    if args.backup_only:
+        backups = {b.slug: backup_business(b, run_date) for b in businesses}
+        print_summary({}, backups)
+        return 1 if any(r.status == "failed" for r in backups.values()) else 0
+
     headless = False if args.headed else config.HEADLESS
 
     report_count = len(args.report) if args.report else len(platform.describe_reports())
@@ -78,6 +86,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     all_results: dict[str, list] = {}
+    backups: dict[str, BackupResult] = {}
     for index, business in enumerate(businesses):
         if index:
             time.sleep(PAUSE_BETWEEN_BUSINESSES_S)
@@ -88,12 +97,15 @@ def main(argv: list[str] | None = None) -> int:
         except KeyError as exc:  # an unknown report key
             logger.error(exc)
             return 2
+        if not args.no_backup:
+            backups[business.slug] = backup_business(business, run_date)
 
-    print_summary(all_results)
+    print_summary(all_results, backups)
 
     failed = sum(
         1 for results in all_results.values() for r in results if r.status != "ok"
     )
+    failed += sum(1 for r in backups.values() if r.status == "failed")
     return 1 if failed else 0
 
 
@@ -104,6 +116,10 @@ def list_businesses(businesses: list[Business], platform) -> None:
         state = "enabled" if business.enabled else "disabled"
         cached = "session cached" if business.session_file.exists() else "no session yet"
         print(f"  {business.slug:<24} {business.name:<28} {state}, {cached}")
+        drive = drive_folder_for(business)
+        if drive is not None:
+            found = "" if drive.is_dir() else "  (NOT FOUND)"
+            print(f"  {'':<24} drive: {drive}{found}")
         if business.notes:
             print(f"  {'':<24} note: {business.notes}")
 
@@ -114,10 +130,11 @@ def list_businesses(businesses: list[Business], platform) -> None:
     print()
 
 
-def print_summary(all_results: dict[str, list]) -> None:
+def print_summary(all_results: dict[str, list], backups: dict[str, BackupResult]) -> None:
     """A short table of what came back, so a run can be read at a glance."""
     print("\n--- Summary ---")
-    for slug, results in all_results.items():
+    for slug in dict.fromkeys([*all_results, *backups]):
+        results = all_results.get(slug, [])
         print(f"\n{slug}")
         for result in results:
             if result.status == "ok":
@@ -128,6 +145,15 @@ def print_summary(all_results: dict[str, list]) -> None:
                 )
             else:
                 print(f"  FAILED  {result.report_key:<24} {result.error}")
+        backup = backups.get(slug)
+        if backup is None:
+            continue
+        if backup.status == "ok":
+            print(f"  backup  {len(backup.files)} file(s) -> {backup.destination}")
+        elif backup.status == "skipped":
+            print(f"  backup  skipped - {backup.message}")
+        else:
+            print(f"  BACKUP FAILED - {backup.message}")
     print()
 
 
@@ -172,6 +198,16 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--trace",
         action="store_true",
         help="Record a Playwright trace per business into the run's debug folder.",
+    )
+    parser.add_argument(
+        "--no-backup",
+        action="store_true",
+        help="Do not copy the run into each business's Google Drive folder.",
+    )
+    parser.add_argument(
+        "--backup-only",
+        action="store_true",
+        help="Skip extraction; copy the run for --date (default today) to Drive.",
     )
     parser.add_argument(
         "--list",

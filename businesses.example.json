@@ -6,6 +6,7 @@
     "password": "put-the-real-password-here",
     "enabled": true,
     "history_start": "2020-01-01",
+    "drive_folder": "9-16-26 - Downtown Yoga (WL)",
     "notes": "Staff login must have the 'Export and print reports' permission."
   },
   {

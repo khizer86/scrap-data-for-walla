@@ -42,6 +42,9 @@ class Business:
     # before the business existed is not free: on a big studio the sales
     # export never finished over a ten-year window.
     history_start: str = ""
+    # This business's Google Drive folder, relative to DRIVE_ROOT in .env.
+    # Each run is copied into a dated subfolder of it. Empty means no backup.
+    drive_folder: str = ""
     notes: str = ""
 
     @property
@@ -168,6 +171,7 @@ def _business_from_entry(entry: dict, index: int) -> Business:
         password=password,
         enabled=bool(entry.get("enabled", True)),
         history_start=entry.get("history_start", ""),
+        drive_folder=(entry.get("drive_folder") or "").strip(),
         notes=entry.get("notes", ""),
     )
 

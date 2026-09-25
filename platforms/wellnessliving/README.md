@@ -29,9 +29,12 @@ Without activating, prefix with `uv run`: `uv run python run.py`.
 | `python run.py --date 2026-09-23` | Treat that as today, for date windows and the output folder |
 | `python run.py --headed` | Show the browser — first login only, see below |
 | `python run.py --trace` | Record a Playwright trace into the run's `debug/` folder |
+| `python run.py --no-backup` | Extract, but don't copy to Google Drive |
+| `python run.py -b dryp-yoga --backup-only` | Only copy today's (or `--date`'s) run to Drive |
 
 Exit codes: `0` everything succeeded, `1` at least one report failed, `2` a
 configuration problem (unknown business or report, bad `businesses.json`).
+A failed Drive backup also exits `1`.
 
 A full run is roughly 3–5 minutes per business, longer for a large one — a
 9,000-client studio takes about 15 minutes.
@@ -51,6 +54,7 @@ shape). No code change.
   "password": "...",
   "enabled": true,
   "history_start": "2020-01-01",
+  "drive_folder": "9-24-26 - New Studio (WL)",
   "notes": "Anything worth remembering about this account."
 }
 ```
@@ -155,6 +159,21 @@ the record of the eight that already succeeded that day.
 
 Row counts in `run.json` are the reliable signal. An empty export has no header
 row at all, so an empty file and a broken one look alike on disk.
+
+### Google Drive backup
+
+After each business finishes, its run is copied to
+`<DRIVE_ROOT>\<drive_folder>\<YYYY-MM-DD>\` — the raw export of each successful
+report plus `run.json`, flat in that folder. Cleaned CSVs and `debug/` stay
+local; the cleaned files can always be rebuilt from raw.
+
+- `DRIVE_ROOT` in `.env` is a Google Drive for Desktop path, e.g.
+  `G:\Shared drives\Walla Onboarding + DM\Migrations`. `drive_folder` in
+  `businesses.json` is the business's folder under it, as created at planning.
+- The business folder is **not** created by the script. If it is missing, or
+  Drive for Desktop isn't running, the backup fails loudly and the local files
+  are untouched — create the folder and run `--backup-only`.
+- Leave either setting empty to skip backup for that business.
 
 ---
 

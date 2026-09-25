@@ -25,6 +25,11 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", PROJECT_ROOT / "outputs"))
 # so we can skip the login flow on subsequent runs while the session lasts.
 SESSION_DIR = Path(os.getenv("SESSION_DIR", PROJECT_ROOT / ".sessions"))
 
+# Google Drive for Desktop folder that each business's `drive_folder` is
+# relative to, e.g. G:\Shared drives\Walla Onboarding + DM\Migrations.
+# Empty turns Drive backup off.
+DRIVE_ROOT = os.getenv("DRIVE_ROOT", "").strip()
+
 
 # --- Browser behaviour -------------------------------------------------
 
